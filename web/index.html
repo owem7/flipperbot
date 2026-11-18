@@ -44,7 +44,7 @@
   .note { color: var(--muted); font-size: 12px; margin: 0 0 10px; }
 
   .table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); }
-  table { border-collapse: collapse; width: 100%; min-width: 760px; }
+  table { border-collapse: collapse; width: 100%; min-width: 980px; }
   th, td { padding: 9px 12px; text-align: right; border-bottom: 1px solid var(--line); white-space: nowrap; }
   th:nth-child(2), td:nth-child(2) { text-align: left; white-space: normal; }
   th { font-size: 12px; color: var(--muted); font-weight: 500; cursor: pointer; position: sticky; top: 0;
@@ -65,14 +65,6 @@
   .err { background: rgba(248,113,113,.1); border: 1px solid var(--red); color: var(--red);
          padding: 10px 14px; border-radius: 8px; margin-bottom: 12px; display: none; }
 
-  .reports { display: grid; grid-template-columns: 220px 1fr; gap: 12px; }
-  .reports ul { list-style: none; margin: 0; padding: 0; border: 1px solid var(--line); border-radius: 12px;
-                background: var(--panel); max-height: 70vh; overflow: auto; }
-  .reports li { padding: 9px 12px; border-bottom: 1px solid var(--line); cursor: pointer; font-family: var(--mono); font-size: 13px; }
-  .reports li:hover, .reports li.on { background: var(--panel-2); color: var(--gold); }
-  .reports pre { margin: 0; padding: 14px; background: var(--panel); border: 1px solid var(--line);
-                 border-radius: 12px; overflow: auto; max-height: 70vh; font-size: 12px; white-space: pre; }
-  @media (max-width: 700px) { .reports { grid-template-columns: 1fr; } }
 </style>
 </head>
 <body>
@@ -99,7 +91,7 @@
     <label>Min AH profit <input name="min_profit" value="500k"></label>
     <label>Min ROI <input name="min_roi" value="0.05"></label>
     <label>Max ROI (sanity) <input name="max_roi" value="0.75"></label>
-    <label>Min AH listings <input name="min_listings" value="6"></label>
+    <label>Min exact matches <input name="min_matches" value="2"></label>
     <label>Bazaar volume share <input name="share" value="0.10"></label>
     <label>Results <input name="top" value="25"></label>
   </form>
@@ -109,7 +101,6 @@
   <div class="tabs">
     <button class="tab on" data-pane="bz">Bazaar <span class="n" id="n-bz">–</span></button>
     <button class="tab" data-pane="ah">Auction House <span class="n" id="n-ah">–</span></button>
-    <button class="tab" data-pane="rp">Daily reports</button>
   </div>
 
   <section class="pane on" id="bz">
@@ -119,14 +110,11 @@
   </section>
 
   <section class="pane" id="ah">
-    <p class="note" id="ah-note">Lowest BIN vs. next-lowest BIN of the exact same item (stars, recomb, pet level, attributes).
-      Snipes vanish in seconds — turn on Live AH to catch them.</p>
+    <p class="note" id="ah-note">Lowest BIN vs. the next-lowest BIN of the exact same item (rarity, enchants, reforge,
+      stars, potato books, gemstones), sold at the lower of that or the estimated value. Snipes vanish in seconds — turn on Live AH.</p>
     <div class="table-wrap"><table id="ah-table"></table></div>
   </section>
 
-  <section class="pane" id="rp">
-    <div class="reports"><ul id="rp-list"></ul><pre id="rp-view">Pick a report.</pre></div>
-  </section>
 </div>
 
 <script>
@@ -155,7 +143,6 @@ form.addEventListener("change", () => {
 document.querySelectorAll(".tab").forEach((t) => t.onclick = () => {
   document.querySelectorAll(".tab, .pane").forEach((e) => e.classList.remove("on"));
   t.classList.add("on"); $("#" + t.dataset.pane).classList.add("on");
-  if (t.dataset.pane === "rp") loadReports();
 });
 
 // ── sortable tables ──
@@ -166,9 +153,10 @@ const tables = {
     ["Profit/hr", "profit_hr", (v) => `<span class="pos">${fmt(v)}</span>`],
   ]},
   ah: { rows: [], key: "profit", asc: false, cols: [
-    ["#", null], ["Item", "item"], ["Lowest BIN", "cost", fmt], ["Next BIN", "resell", fmt],
+    ["#", null], ["Item", "item"], ["Lowest BIN", "cost", fmt], ["Next exact BIN", "next_bin", fmt],
+    ["Est. value", "est_value", (v) => v ? fmt(v) : "—"], ["Sell at", "resell", fmt],
     ["Profit (after tax)", "profit", (v) => `<span class="pos">${fmt(v)}</span>`],
-    ["ROI", "roi", (v) => pct(v, 0)], ["Listings", "listings", String], ["", null],
+    ["ROI", "roi", (v) => pct(v, 0)], ["Matches", "listings", String], ["", null],
   ]},
 };
 let seen = new Set(), firstAh = true;
@@ -178,7 +166,7 @@ function render(id) {
   if (!t.rows.length) { el.innerHTML = `<tr><td class="empty">No flips match your filters.</td></tr>`; return; }
   const rows = [...t.rows].sort((a, b) => {
     const x = a[t.key], y = b[t.key];
-    return (typeof x === "string" ? x.localeCompare(y) : x - y) * (t.asc ? 1 : -1);
+    return (typeof x === "string" ? x.localeCompare(y) : (x ?? -1) - (y ?? -1)) * (t.asc ? 1 : -1);
   });
   const head = t.cols.map(([label, key]) =>
     `<th data-key="${key || ""}" class="${key === t.key ? "sorted" + (t.asc ? " asc" : "") : ""}">${label}</th>`).join("");
@@ -240,19 +228,6 @@ $("#live").onchange = (e) => {
   clearInterval(liveTimer);
   if (e.target.checked) { scan({ ahOnly: true }); liveTimer = setInterval(() => scan({ ahOnly: true }), 60000); }
 };
-
-// ── past reports ──
-async function loadReports() {
-  const files = await (await fetch("/api/reports")).json();
-  const ul = $("#rp-list");
-  ul.innerHTML = files.length ? files.map((f) => `<li data-f="${esc(f)}">${esc(f.replace("flips-", "").replace(".md", ""))}</li>`).join("")
-                              : `<li>No reports yet</li>`;
-  ul.querySelectorAll("li[data-f]").forEach((li) => li.onclick = async () => {
-    ul.querySelectorAll("li").forEach((x) => x.classList.remove("on")); li.classList.add("on");
-    $("#rp-view").textContent = await (await fetch("/api/reports/" + encodeURIComponent(li.dataset.f))).text();
-  });
-  ul.querySelector("li[data-f]")?.click();
-}
 
 scan();
 </script>

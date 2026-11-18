@@ -158,17 +158,34 @@ def fetch_all_auctions():
 
 LVL_RE = re.compile(r"\[Lvl (\d+)\]")
 
+# How much of an applied upgrade's bazaar price a buyer actually pays for it.
+APPLIED_WEIGHT = {"enchants": 0.85, "hpb": 1.0, "fpb": 0.6, "recomb": 0.8, "gems": 1.0}
 
-def item_key(a):
-    """Group listings that are *actually* the same thing, not just the same name."""
-    try:
-        ea = decode_item(a["item_bytes"])
-    except Exception:
-        return None
+
+def stars_of(ea):
+    return ea.get("upgrade_level") or ea.get("dungeon_item_level") or 0
+
+
+def gem_list(ea):
+    """[(TYPE, QUALITY), ...] for every gem actually socketed."""
+    gems = ea.get("gems") or {}
+    out = []
+    for slot, val in gems.items():
+        if slot == "unlocked_slots" or slot.endswith("_gem"):
+            continue
+        quality = val.get("quality") if isinstance(val, dict) else val
+        gtype = gems.get(slot + "_gem") or slot.rsplit("_", 1)[0]  # universal slots name their gem separately
+        if quality:
+            out.append((str(gtype).upper(), str(quality).upper()))
+    return sorted(out)
+
+
+def item_key(a, ea):
+    """Exact-match key: listings only compare against the *same* item —
+    same rarity, enchantments, reforge, stars, potato books and gemstones."""
     iid = ea.get("id")
     if not iid:
         return None
-    key = [iid]
 
     if iid == "PET":
         try:
@@ -185,23 +202,51 @@ def item_key(a):
             key.append(info["heldItem"])
         if info.get("skin"):
             key.append("SKIN:" + info["skin"])
-    elif iid == "ENCHANTED_BOOK":
+        return tuple(str(k) for k in key)
+
+    if iid == "ENCHANTED_BOOK":
         ench = ea.get("enchantments", {})
         if len(ench) != 1:
             return None
         (name, lvl), = ench.items()
-        key = ["BOOK", name, lvl]
-    else:
-        if ea.get("rarity_upgrades"):
-            key.append("RECOMB")
-        stars = ea.get("upgrade_level") or ea.get("dungeon_item_level")
-        if stars:
-            key.append(f"{stars}*")
-        if ea.get("attributes"):  # Kuudra attributes swing prices massively
-            key.append("ATTR:" + ",".join(f"{k}{v}" for k, v in sorted(ea["attributes"].items())))
-        if ea.get("skin"):
-            key.append("SKIN:" + ea["skin"])
+        return ("BOOK", str(name), str(lvl))
+
+    key = [iid, "RARITY:" + a.get("tier", "")]
+    if ea.get("rarity_upgrades"):
+        key.append("RECOMB")
+    key.append(f"STARS:{stars_of(ea)}")
+    key.append("REFORGE:" + str(ea.get("modifier") or "none"))
+    key.append(f"HPB:{ea.get('hot_potato_count') or 0}")
+    ench = ea.get("enchantments") or {}
+    key.append("ENCH:" + ",".join(f"{k}{v}" for k, v in sorted(ench.items())))
+    key.append("GEMS:" + ",".join(f"{q}_{t}" for t, q in gem_list(ea)))
+    if ea.get("attributes"):  # Kuudra attributes swing prices massively
+        key.append("ATTR:" + ",".join(f"{k}{v}" for k, v in sorted(ea["attributes"].items())))
+    if ea.get("skin"):
+        key.append("SKIN:" + ea["skin"])
     return tuple(str(k) for k in key)
+
+
+def bazaar_prices():
+    """Instant-sell price (highest buy order) for every bazaar product."""
+    prods = get_json(f"{API}/bazaar")["products"]
+    return {pid: p["quick_status"]["sellPrice"] for pid, p in prods.items()}
+
+
+def upgrade_value(ea, bz):
+    """Rough coin value of what's been applied to an item, from bazaar prices."""
+    w = APPLIED_WEIGHT
+    total = 0.0
+    for name, lvl in (ea.get("enchantments") or {}).items():
+        total += bz.get(f"ENCHANTMENT_{name.upper()}_{lvl}", 0) * w["enchants"]
+    potatoes = int(ea.get("hot_potato_count") or 0)
+    total += min(potatoes, 10) * bz.get("HOT_POTATO_BOOK", 0) * w["hpb"]
+    total += max(potatoes - 10, 0) * bz.get("FUMING_POTATO_BOOK", 0) * w["fpb"]
+    if ea.get("rarity_upgrades"):
+        total += bz.get("RECOMBOBULATOR_3000", 0) * w["recomb"]
+    for gtype, quality in gem_list(ea):
+        total += bz.get(f"{quality}_{gtype}_GEM", 0) * w["gems"]
+    return total
 
 
 def ah_fee(price):
@@ -211,26 +256,60 @@ def ah_fee(price):
 
 
 def auction_flips(min_profit, min_roi, min_listings, max_price, top, max_roi, seen=None):
+    """
+    Lowest BIN vs. the next-lowest BIN of the exact same item, cross-checked
+    against an estimated value:  estimated value = clean base price of the item
+    (other listings' price minus their upgrades) + bazaar value of this item's
+    enchants, potato books, recomb and gemstones.  The resell target is the
+    lower of "next exact listing" and "estimated value", so an overpriced
+    second listing can't make a fake flip.
+    """
     auctions, updated = fetch_all_auctions()
-    groups = {}
+    bz = bazaar_prices()
+
+    groups, by_base = {}, {}
     for a in auctions:
         if not a.get("bin") or a.get("claimed"):
             continue
-        k = item_key(a)
-        if k:
-            groups.setdefault(k, []).append(a)
+        try:
+            ea = decode_item(a["item_bytes"])
+        except Exception:
+            continue
+        k = item_key(a, ea)
+        if not k:
+            continue
+        a["_ea"] = ea
+        groups.setdefault(k, []).append(a)
+        if k[0] not in ("PET", "BOOK"):
+            a["_upg"] = upgrade_value(ea, bz)
+            clean = max(a["starting_bid"] - a["_upg"], 0)
+            by_base.setdefault((ea["id"], None), []).append((clean, a["uuid"]))
+            by_base.setdefault((ea["id"], stars_of(ea)), []).append((clean, a["uuid"]))
+
+    def estimate(k, a):
+        if k[0] == "BOOK":
+            return bz.get(f"ENCHANTMENT_{k[1].upper()}_{k[2]}") or None
+        if k[0] == "PET":
+            return None
+        ea = a["_ea"]
+        for bucket in ((ea["id"], stars_of(ea)), (ea["id"], None)):
+            others = sorted(c for c, u in by_base.get(bucket, []) if u != a["uuid"])
+            if others:
+                return statistics.median(others[:3]) + a["_upg"]
+        return None
 
     rows = []
     for k, listings in groups.items():
-        if len(listings) < min_listings:
+        if len(listings) < max(min_listings, 2):
             continue
         listings.sort(key=lambda a: a["starting_bid"])
         low, nxt = listings[0], listings[1]
         cost = low["starting_bid"]
         if cost > max_price:
             continue
-        resell = nxt["starting_bid"] - 1
-        median5 = statistics.median(x["starting_bid"] for x in listings[1:6])
+        next_bin = nxt["starting_bid"] - 1
+        est = estimate(k, low)
+        resell = min(next_bin, est) if est else next_bin
         profit = resell * (1 - ah_fee(resell)) - cost
         roi = profit / cost if cost else 0
         if profit < min_profit or roi < min_roi or roi > max_roi:
@@ -242,8 +321,9 @@ def auction_flips(min_profit, min_roi, min_listings, max_price, top, max_roi, se
             "tier": low.get("tier", ""),
             "key": " ".join(k),
             "cost": cost,
+            "next_bin": next_bin,
+            "est_value": est,
             "resell": resell,
-            "median5": median5,
             "profit": profit,
             "roi": roi,
             "listings": len(listings),
@@ -266,11 +346,12 @@ def bazaar_table(rows):
 
 
 def ah_table(rows):
-    out = ["| # | Item | Lowest BIN | Next BIN | Profit (after tax) | ROI | Listings | Command |",
-           "|---|---|---|---|---|---|---|---|"]
+    out = ["| # | Item | Lowest BIN | Next exact BIN | Est. value | Sell at | Profit (after tax) | ROI | Matches | Command |",
+           "|---|---|---|---|---|---|---|---|---|---|"]
     for i, r in enumerate(rows, 1):
-        out.append(f"| {i} | {r['item']} ({r['tier']}) | {fmt(r['cost'])} | {fmt(r['resell'])} | "
-                   f"{fmt(r['profit'])} | {r['roi']:.0%} | {r['listings']} | `{r['cmd']}` |")
+        est = fmt(r["est_value"]) if r["est_value"] else "—"
+        out.append(f"| {i} | {r['item']} ({r['tier']}) | {fmt(r['cost'])} | {fmt(r['next_bin'])} | {est} | "
+                   f"{fmt(r['resell'])} | {fmt(r['profit'])} | {r['roi']:.0%} | {r['listings']} | `{r['cmd']}` |")
     return "\n".join(out)
 
 
@@ -298,7 +379,8 @@ def main():
     ap.add_argument("--min-roi", type=float, default=0.05, help="min AH ROI (0.05 = 5%%)")
     ap.add_argument("--max-roi", type=float, default=0.75,
                     help="drop flips above this ROI (usually mispriced/misgrouped items, not real flips)")
-    ap.add_argument("--min-listings", type=int, default=6, help="min BIN listings to trust a price")
+    ap.add_argument("--min-listings", type=int, default=2,
+                    help="min BIN listings of the exact same item (incl. the one you buy; at least 2)")
     ap.add_argument("--max-price", default=None, help="max AH buy price (defaults to budget)")
     ap.add_argument("--top", type=int, default=20)
     ap.add_argument("--no-bazaar", action="store_true")
@@ -355,8 +437,9 @@ def main():
         ah, updated, n = auction_flips(min_profit, args.min_roi, args.min_listings, max_price, args.top, args.max_roi)
         age = int(time.time() - updated / 1000)
         sections += ["", "## Auction House BIN flips",
-                     f"_{n:,} auctions scanned, data {age}s old. Lowest BIN vs next-lowest of the same "
-                     "item (same stars/recomb/pet level/attributes). Snipes disappear fast — "
+                     f"_{n:,} auctions scanned, data {age}s old. Lowest BIN vs next-lowest BIN of the exact "
+                     "same item (rarity, enchants, reforge, stars, potato books, gemstones), sold at "
+                     "the lower of that or the estimated value. Snipes disappear fast — "
                      "use `--watch 60` for live ones._",
                      "", ah_table(ah)]
 

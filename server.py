@@ -20,7 +20,6 @@ from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 import flipper
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-REPORTS = os.path.join(HERE, "reports")
 INDEX = os.path.join(HERE, "web", "index.html")
 
 # Each scan downloads the whole Auction House, so identical requests within
@@ -65,7 +64,7 @@ def scan(q):
         rows, updated, n = flipper.auction_flips(
             min_profit=num(q, "min_profit", 500e3),
             min_roi=num(q, "min_roi", 0.05),
-            min_listings=num(q, "min_listings", 6, int),
+            min_listings=num(q, "min_matches", 2, int),
             max_price=num(q, "max_price", budget),
             top=num(q, "top", 25, int),
             max_roi=num(q, "max_roi", 0.75),
@@ -99,16 +98,6 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, "ok", "text/plain")
             if url.path == "/api/scan":
                 return self._json(cached_scan(url.query, q))
-            if url.path == "/api/reports":
-                files = sorted((f for f in os.listdir(REPORTS) if f.endswith(".md")), reverse=True) \
-                    if os.path.isdir(REPORTS) else []
-                return self._json(files)
-            if url.path.startswith("/api/reports/"):
-                name = os.path.basename(urllib.parse.unquote(url.path))
-                path = os.path.join(REPORTS, name)
-                if name.endswith(".md") and os.path.isfile(path):
-                    with open(path, encoding="utf-8") as f:
-                        return self._send(200, f.read(), "text/plain; charset=utf-8")
             self._send(404, "not found", "text/plain")
         except Exception as e:
             self._json({"error": str(e)}, 500)
