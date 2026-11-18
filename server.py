@@ -5,11 +5,14 @@ Local website for the SkyBlock flip finder.
     python3 server.py            # then open http://localhost:8765
     python3 server.py --port 9000
 
-Only listens on this computer (127.0.0.1). Standard library only.
+Locally it only listens on this computer (127.0.0.1). On a host like Render,
+which sets the PORT environment variable, it listens on 0.0.0.0:$PORT.
+Standard library only.
 """
 import argparse
 import json
 import os
+import threading
 import time
 import urllib.parse
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
@@ -19,6 +22,24 @@ import flipper
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPORTS = os.path.join(HERE, "reports")
 INDEX = os.path.join(HERE, "web", "index.html")
+
+# Each scan downloads the whole Auction House, so identical requests within
+# CACHE_SECS share one result instead of each hitting Hypixel again.
+CACHE_SECS = int(os.environ.get("SCAN_CACHE_SECS", "60"))
+_cache = {}
+_cache_lock = threading.Lock()
+
+
+def cached_scan(query_string, q):
+    key = "&".join(sorted(query_string.split("&")))
+    with _cache_lock:  # one scan at a time; waiters reuse its result
+        hit = _cache.get(key)
+        if hit and time.time() - hit[0] < CACHE_SECS:
+            return hit[1]
+        result = scan(q)
+        _cache.clear()
+        _cache[key] = (time.time(), result)
+        return result
 
 
 def num(q, key, default, cast=float):
@@ -74,8 +95,10 @@ class Handler(BaseHTTPRequestHandler):
             if url.path in ("/", "/index.html"):
                 with open(INDEX, "rb") as f:
                     return self._send(200, f.read(), "text/html; charset=utf-8")
+            if url.path == "/healthz":
+                return self._send(200, "ok", "text/plain")
             if url.path == "/api/scan":
-                return self._json(scan(q))
+                return self._json(cached_scan(url.query, q))
             if url.path == "/api/reports":
                 files = sorted((f for f in os.listdir(REPORTS) if f.endswith(".md")), reverse=True) \
                     if os.path.isdir(REPORTS) else []
@@ -96,10 +119,12 @@ class Handler(BaseHTTPRequestHandler):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--port", type=int, default=8765)
+    env_port = os.environ.get("PORT")
+    ap.add_argument("--port", type=int, default=int(env_port or 8765))
+    ap.add_argument("--host", default=os.environ.get("HOST", "0.0.0.0" if env_port else "127.0.0.1"))
     args = ap.parse_args()
-    srv = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
-    print(f"Flip Bot running at http://localhost:{args.port}  (Ctrl+C to stop)")
+    srv = ThreadingHTTPServer((args.host, args.port), Handler)
+    print(f"Flip Bot running at http://{args.host}:{args.port}  (Ctrl+C to stop)", flush=True)
     try:
         srv.serve_forever()
     except KeyboardInterrupt:
