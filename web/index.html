@@ -62,6 +62,14 @@
   .copy { padding: 4px 10px; font-size: 12px; font-family: inherit; }
   .copy.done { color: var(--green); border-color: var(--green); }
   .empty { padding: 40px; text-align: center; color: var(--muted); }
+  .search { position: relative; margin-bottom: 16px; }
+  .search input { font: inherit; font-size: 15px; width: 100%; color: var(--text); background: var(--panel);
+                  border: 1px solid var(--line); border-radius: 10px; padding: 11px 14px 11px 38px; }
+  .search input:focus { outline: none; border-color: var(--gold); }
+  .search::before { content: "⌕"; position: absolute; left: 13px; top: 8px; font-size: 19px; color: var(--muted); }
+  #search-results { margin-bottom: 20px; display: none; }
+  #search-results.on { display: block; }
+  .sub { display: block; font-family: var(--mono); font-size: 11px; color: var(--muted); }
   .err { background: rgba(248,113,113,.1); border: 1px solid var(--red); color: var(--red);
          padding: 10px 14px; border-radius: 8px; margin-bottom: 12px; display: none; }
 
@@ -78,6 +86,15 @@
     </label>
     <button class="primary" id="run">Scan now</button>
   </header>
+
+  <div class="search">
+    <input id="q" type="search" placeholder="Search Bazaar items — e.g. enchanted diamond, ultimate wise, booster cookie"
+           autocomplete="off" spellcheck="false" aria-label="Search Bazaar items">
+  </div>
+  <section id="search-results">
+    <p class="note" id="search-note"></p>
+    <div class="table-wrap"><table id="search-table"></table></div>
+  </section>
 
   <form class="settings" id="settings" onsubmit="return false">
     <label>Budget <input name="budget" value="100m"></label>
@@ -159,12 +176,20 @@ const tables = {
     ["ROI", "roi", (v) => pct(v, 0)], ["Matches", "listings", String], ["", null],
   ]},
 };
+const price = (v) => v == null ? "—" : fmt(v);
+tables.search = { rows: [], key: null, asc: false, cols: [
+  ["#", null], ["Item", "item"],
+  ["Buy now", "buy_now", price], ["Sell now", "sell_now", price],
+  ["Buy order", "buy_order", price], ["Sell offer", "sell_offer", price],
+  ["Spread", "spread", price], ["Buy orders", "buy_orders", (v) => v.toLocaleString()],
+  ["Sell offers", "sell_offers", (v) => v.toLocaleString()], ["Weekly vol", "weekly", fmt],
+]};
 let seen = new Set(), firstAh = true;
 
 function render(id) {
   const t = tables[id], el = $(`#${id}-table`);
-  if (!t.rows.length) { el.innerHTML = `<tr><td class="empty">No flips match your filters.</td></tr>`; return; }
-  const rows = [...t.rows].sort((a, b) => {
+  if (!t.rows.length) { el.innerHTML = `<tr><td class="empty">${id === "search" ? "No Bazaar items match." : "No flips match your filters."}</td></tr>`; return; }
+  const rows = t.key == null ? t.rows : [...t.rows].sort((a, b) => {
     const x = a[t.key], y = b[t.key];
     return (typeof x === "string" ? x.localeCompare(y) : (x ?? -1) - (y ?? -1)) * (t.asc ? 1 : -1);
   });
@@ -173,7 +198,8 @@ function render(id) {
   const body = rows.map((r, i) => {
     const cells = t.cols.map(([, key, f], c) => {
       if (c === 0) return `<td class="rank">${i + 1}</td>`;
-      if (key === "item") return `<td>${esc(r.item)}${r.tier ? `<span class="tier ${esc(r.tier)}">${esc(r.tier)}</span>` : ""}</td>`;
+      if (key === "item") return `<td>${esc(r.item)}${r.tier ? `<span class="tier ${esc(r.tier)}">${esc(r.tier)}</span>` : ""}` +
+        (id === "search" ? `<span class="sub">${esc(r.id)}</span>` : "") + `</td>`;
       if (!key) return `<td><button class="copy" data-cmd="${esc(r.cmd)}">Copy /viewauction</button></td>`;
       return `<td>${f(r[key])}</td>`;
     }).join("");
@@ -228,6 +254,30 @@ $("#live").onchange = (e) => {
   clearInterval(liveTimer);
   if (e.target.checked) { scan({ ahOnly: true }); liveTimer = setInterval(() => scan({ ahOnly: true }), 60000); }
 };
+
+// ── item search ──
+let searchTimer = null, searchSeq = 0;
+$("#q").addEventListener("input", (e) => {
+  clearTimeout(searchTimer);
+  const q = e.target.value.trim();
+  if (!q) { $("#search-results").classList.remove("on"); return; }
+  searchTimer = setTimeout(async () => {
+    const seq = ++searchSeq;
+    try {
+      const rows = await (await fetch("/api/search?q=" + encodeURIComponent(q))).json();
+      if (seq !== searchSeq) return;  // a newer search already started
+      if (rows.error) throw new Error(rows.error);
+      tables.search.rows = rows; tables.search.key = null;
+      render("search");
+      $("#search-note").textContent = `${rows.length} Bazaar item${rows.length === 1 ? "" : "s"} · ` +
+        "Buy now / Sell now = instant prices · Buy order / Sell offer = price to place to be first in line.";
+      $("#search-results").classList.add("on");
+    } catch (err) {
+      $("#search-note").textContent = "Search failed: " + err.message;
+      $("#search-results").classList.add("on");
+    }
+  }, 250);
+});
 
 scan();
 </script>

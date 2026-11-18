@@ -29,6 +29,19 @@ _cache = {}
 _cache_lock = threading.Lock()
 
 
+_bz = {"at": 0, "data": None}
+_bz_lock = threading.Lock()
+
+
+def bazaar_data(max_age=20):
+    """Bazaar snapshot shared by searches, refreshed every few seconds at most."""
+    with _bz_lock:
+        if time.time() - _bz["at"] > max_age:
+            _bz["data"] = flipper.get_json(f"{flipper.API}/bazaar")
+            _bz["at"] = time.time()
+        return _bz["data"]
+
+
 def cached_scan(query_string, q):
     key = "&".join(sorted(query_string.split("&")))
     with _cache_lock:  # one scan at a time; waiters reuse its result
@@ -96,6 +109,9 @@ class Handler(BaseHTTPRequestHandler):
                     return self._send(200, f.read(), "text/html; charset=utf-8")
             if url.path == "/healthz":
                 return self._send(200, "ok", "text/plain")
+            if url.path == "/api/search":
+                query = q.get("q", [""])[0][:60]
+                return self._json(flipper.bazaar_search(query, data=bazaar_data()))
             if url.path == "/api/scan":
                 return self._json(cached_scan(url.query, q))
             self._send(404, "not found", "text/plain")

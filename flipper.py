@@ -144,6 +144,62 @@ def bazaar_flips(tax, budget, min_weekly_vol, share, top, max_roi):
     return rows[:top]
 
 
+_names = {"at": 0, "map": {}}
+
+
+def item_names():
+    """Display names for item IDs from Hypixel's item list (refreshed daily)."""
+    if time.time() - _names["at"] > 86400:
+        try:
+            items = get_json("https://api.hypixel.net/v2/resources/skyblock/items")["items"]
+            _names["map"] = {i["id"]: re.sub(r"§.", "", i.get("name", "")) for i in items if i.get("name")}
+            _names["at"] = time.time()
+        except Exception:
+            pass  # fall back to prettified IDs
+    return _names["map"]
+
+
+def bazaar_search(query, limit=30, data=None):
+    """
+    Bazaar prices for items whose name or ID contains every word of `query`.
+      buy_now    = lowest sell offer   (what Buy Instantly costs per unit)
+      sell_now   = highest buy order   (what Sell Instantly pays per unit)
+      buy_order  = price to place a buy order at the top  (highest buy order + 0.1)
+      sell_offer = price to place a sell offer at the top (lowest sell offer - 0.1)
+    """
+    words = query.lower().split()
+    if not words:
+        return []
+    data = data or get_json(f"{API}/bazaar")
+    names = item_names()
+    rows = []
+    for pid, p in data["products"].items():
+        name = names.get(pid) or pretty(pid)
+        hay = f"{name} {pid.replace('_', ' ')}".lower()
+        if not all(w in hay for w in words):
+            continue
+        q = p["quick_status"]
+        offers, orders = p.get("buy_summary") or [], p.get("sell_summary") or []
+        buy_now = offers[0]["pricePerUnit"] if offers else None
+        sell_now = orders[0]["pricePerUnit"] if orders else None
+        rows.append({
+            "item": name,
+            "id": pid,
+            "buy_now": buy_now,
+            "sell_now": sell_now,
+            "buy_order": sell_now + 0.1 if sell_now else None,
+            "sell_offer": buy_now - 0.1 if buy_now else None,
+            "spread": buy_now - sell_now if buy_now and sell_now else None,
+            "buy_orders": q["sellOrders"],   # API's "sell" side = buy orders
+            "sell_offers": q["buyOrders"],   # API's "buy" side  = sell offers
+            "weekly": min(q["buyMovingWeek"], q["sellMovingWeek"]),
+        })
+    # Best matches first: exact name, then names starting with the query, then by volume.
+    ql = query.lower().strip()
+    rows.sort(key=lambda r: (r["item"].lower() != ql, not r["item"].lower().startswith(ql), -r["weekly"]))
+    return rows[:limit]
+
+
 # ─────────────────────────── Auction House ───────────────────────────
 
 def fetch_all_auctions():
