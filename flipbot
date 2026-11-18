@@ -1,0 +1,46 @@
+#!/bin/bash
+# Flip Bot command-line launcher.
+#
+#   flipbot run [--port N]   start the local website and open it in the browser
+#   flipbot scan [args...]   run a one-off scan (args go to flipper.py, e.g. --budget 50m)
+set -euo pipefail
+
+# Resolve the real project folder, even when called through a symlink.
+SRC="${BASH_SOURCE[0]}"
+while [ -L "$SRC" ]; do
+  DIR="$(cd -P "$(dirname "$SRC")" && pwd)"
+  SRC="$(readlink "$SRC")"
+  [[ "$SRC" != /* ]] && SRC="$DIR/$SRC"
+done
+HERE="$(cd -P "$(dirname "$SRC")" && pwd)"
+cd "$HERE"
+
+PY="${PYTHON:-python3}"
+cmd="${1:-}"; shift || true
+
+case "$cmd" in
+  run)
+    port=8765
+    if [ "${1:-}" = "--port" ] && [ -n "${2:-}" ]; then port="$2"; fi
+    url="http://localhost:$port"
+    if curl -s -o /dev/null "$url"; then
+      echo "Flip Bot is already running at $url"
+      open "$url"
+      exit 0
+    fi
+    echo "Starting Flip Bot at $url  (Ctrl+C to stop)"
+    ( for _ in $(seq 1 20); do
+        curl -s -o /dev/null "$url" && { open "$url"; break; }
+        sleep 0.5
+      done ) &
+    exec "$PY" server.py "$@"
+    ;;
+  scan)
+    exec "$PY" flipper.py "$@"
+    ;;
+  *)
+    echo "usage: flipbot run [--port N]"
+    echo "       flipbot scan [flipper.py options]"
+    exit 1
+    ;;
+esac
