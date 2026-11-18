@@ -1,0 +1,260 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Flip Bot</title>
+<style>
+  :root {
+    --bg: #0f1115; --panel: #171a21; --panel-2: #1e222b; --line: #2a2f3a;
+    --text: #e6e8ee; --muted: #8b93a5; --gold: #f5c542; --green: #4ade80;
+    --red: #f87171; --blue: #60a5fa; --new: rgba(245,197,66,.12);
+    --mono: ui-monospace, "SF Mono", Menlo, monospace;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+  .wrap { max-width: 1200px; margin: 0 auto; padding: 20px 16px 60px; }
+  header { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
+  h1 { font-size: 20px; margin: 0; display: flex; align-items: center; gap: 8px; }
+  h1 .coin { width: 22px; height: 22px; border-radius: 50%;
+             background: radial-gradient(circle at 35% 35%, #ffe58a, var(--gold) 60%, #b8860b); }
+  .status { color: var(--muted); font-size: 13px; }
+  .spacer { flex: 1; }
+  button { font: inherit; border: 1px solid var(--line); background: var(--panel-2); color: var(--text);
+           padding: 8px 14px; border-radius: 8px; cursor: pointer; }
+  button:hover { border-color: #3b4252; }
+  button.primary { background: var(--gold); color: #1a1500; border-color: var(--gold); font-weight: 600; }
+  button.primary:disabled { opacity: .6; cursor: wait; }
+  label.toggle { display: flex; align-items: center; gap: 6px; color: var(--muted); cursor: pointer; user-select: none; }
+
+  .settings { background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+              padding: 14px; display: grid; gap: 12px;
+              grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); margin-bottom: 16px; }
+  .settings label { display: grid; gap: 4px; font-size: 12px; color: var(--muted); }
+  .settings input, .settings select { font: inherit; color: var(--text); background: var(--panel-2);
+              border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; width: 100%; }
+
+  .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); margin-bottom: 12px; overflow-x: auto; }
+  .tab { background: none; border: none; border-bottom: 2px solid transparent; border-radius: 0;
+         padding: 10px 14px; color: var(--muted); white-space: nowrap; }
+  .tab.on { color: var(--text); border-bottom-color: var(--gold); }
+  .tab .n { font-size: 11px; background: var(--panel-2); padding: 1px 6px; border-radius: 10px; margin-left: 4px; }
+  .pane { display: none; } .pane.on { display: block; }
+  .note { color: var(--muted); font-size: 12px; margin: 0 0 10px; }
+
+  .table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); }
+  table { border-collapse: collapse; width: 100%; min-width: 760px; }
+  th, td { padding: 9px 12px; text-align: right; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  th:nth-child(2), td:nth-child(2) { text-align: left; white-space: normal; }
+  th { font-size: 12px; color: var(--muted); font-weight: 500; cursor: pointer; position: sticky; top: 0;
+       background: var(--panel); user-select: none; }
+  th:hover { color: var(--text); }
+  th.sorted::after { content: " ▾"; } th.sorted.asc::after { content: " ▴"; }
+  td { font-family: var(--mono); font-size: 13px; }
+  td:nth-child(2) { font-family: inherit; font-size: 14px; }
+  tr:last-child td { border-bottom: none; }
+  tr.new td { background: var(--new); }
+  .pos { color: var(--green); } .rank { color: var(--muted); }
+  .tier { font-size: 11px; color: var(--muted); margin-left: 6px; }
+  .tier.LEGENDARY { color: #fbbf24; } .tier.MYTHIC { color: #e879f9; } .tier.EPIC { color: #c084fc; }
+  .tier.RARE { color: var(--blue); } .tier.DIVINE { color: #67e8f9; } .tier.SPECIAL { color: var(--red); }
+  .copy { padding: 4px 10px; font-size: 12px; font-family: inherit; }
+  .copy.done { color: var(--green); border-color: var(--green); }
+  .empty { padding: 40px; text-align: center; color: var(--muted); }
+  .err { background: rgba(248,113,113,.1); border: 1px solid var(--red); color: var(--red);
+         padding: 10px 14px; border-radius: 8px; margin-bottom: 12px; display: none; }
+
+  .reports { display: grid; grid-template-columns: 220px 1fr; gap: 12px; }
+  .reports ul { list-style: none; margin: 0; padding: 0; border: 1px solid var(--line); border-radius: 12px;
+                background: var(--panel); max-height: 70vh; overflow: auto; }
+  .reports li { padding: 9px 12px; border-bottom: 1px solid var(--line); cursor: pointer; font-family: var(--mono); font-size: 13px; }
+  .reports li:hover, .reports li.on { background: var(--panel-2); color: var(--gold); }
+  .reports pre { margin: 0; padding: 14px; background: var(--panel); border: 1px solid var(--line);
+                 border-radius: 12px; overflow: auto; max-height: 70vh; font-size: 12px; white-space: pre; }
+  @media (max-width: 700px) { .reports { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1><span class="coin"></span>Flip Bot</h1>
+    <span class="status" id="status">Not scanned yet</span>
+    <span class="spacer"></span>
+    <label class="toggle" title="Rescan the auction house every 60s and highlight new snipes">
+      <input type="checkbox" id="live"> Live AH (60s)
+    </label>
+    <button class="primary" id="run">Scan now</button>
+  </header>
+
+  <form class="settings" id="settings" onsubmit="return false">
+    <label>Budget <input name="budget" value="100m"></label>
+    <label>Bazaar tax
+      <select name="tax">
+        <option value="1.25">1.25% (default)</option>
+        <option value="1.125">1.125% (Flipper I)</option>
+        <option value="1">1% (Flipper II)</option>
+      </select>
+    </label>
+    <label>Min AH profit <input name="min_profit" value="500k"></label>
+    <label>Min ROI <input name="min_roi" value="0.05"></label>
+    <label>Max ROI (sanity) <input name="max_roi" value="0.75"></label>
+    <label>Min AH listings <input name="min_listings" value="6"></label>
+    <label>Bazaar volume share <input name="share" value="0.10"></label>
+    <label>Results <input name="top" value="25"></label>
+  </form>
+
+  <div class="err" id="err"></div>
+
+  <div class="tabs">
+    <button class="tab on" data-pane="bz">Bazaar <span class="n" id="n-bz">–</span></button>
+    <button class="tab" data-pane="ah">Auction House <span class="n" id="n-ah">–</span></button>
+    <button class="tab" data-pane="rp">Daily reports</button>
+  </div>
+
+  <section class="pane on" id="bz">
+    <p class="note">Place a buy order just above the top buy order, then a sell offer just under the lowest sell offer.
+      Profit/hr assumes you fill your volume share of hourly trades, capped by budget.</p>
+    <div class="table-wrap"><table id="bz-table"></table></div>
+  </section>
+
+  <section class="pane" id="ah">
+    <p class="note" id="ah-note">Lowest BIN vs. next-lowest BIN of the exact same item (stars, recomb, pet level, attributes).
+      Snipes vanish in seconds — turn on Live AH to catch them.</p>
+    <div class="table-wrap"><table id="ah-table"></table></div>
+  </section>
+
+  <section class="pane" id="rp">
+    <div class="reports"><ul id="rp-list"></ul><pre id="rp-view">Pick a report.</pre></div>
+  </section>
+</div>
+
+<script>
+const $ = (s) => document.querySelector(s);
+const fmt = (n) => {
+  const a = Math.abs(n);
+  if (a >= 1e9) return (n / 1e9).toFixed(2) + "b";
+  if (a >= 1e6) return (n / 1e6).toFixed(2) + "m";
+  if (a >= 1e3) return (n / 1e3).toFixed(1) + "k";
+  return n.toFixed(1);
+};
+const pct = (n, d = 1) => (n * 100).toFixed(d) + "%";
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+// ── settings persistence ──
+const form = $("#settings");
+try {
+  const saved = JSON.parse(localStorage.getItem("flipbot-settings") || "{}");
+  for (const [k, v] of Object.entries(saved)) if (form.elements[k]) form.elements[k].value = v;
+} catch {}
+form.addEventListener("change", () => {
+  try { localStorage.setItem("flipbot-settings", JSON.stringify(Object.fromEntries(new FormData(form)))); } catch {}
+});
+
+// ── tabs ──
+document.querySelectorAll(".tab").forEach((t) => t.onclick = () => {
+  document.querySelectorAll(".tab, .pane").forEach((e) => e.classList.remove("on"));
+  t.classList.add("on"); $("#" + t.dataset.pane).classList.add("on");
+  if (t.dataset.pane === "rp") loadReports();
+});
+
+// ── sortable tables ──
+const tables = {
+  bz: { rows: [], key: "profit_hr", asc: false, cols: [
+    ["#", null], ["Item", "item"], ["Buy order", "buy_order", fmt], ["Sell offer", "sell_offer", fmt],
+    ["Margin", "margin", fmt], ["ROI", "roi", pct], ["Vol/hr", "hourly_vol", fmt],
+    ["Profit/hr", "profit_hr", (v) => `<span class="pos">${fmt(v)}</span>`],
+  ]},
+  ah: { rows: [], key: "profit", asc: false, cols: [
+    ["#", null], ["Item", "item"], ["Lowest BIN", "cost", fmt], ["Next BIN", "resell", fmt],
+    ["Profit (after tax)", "profit", (v) => `<span class="pos">${fmt(v)}</span>`],
+    ["ROI", "roi", (v) => pct(v, 0)], ["Listings", "listings", String], ["", null],
+  ]},
+};
+let seen = new Set(), firstAh = true;
+
+function render(id) {
+  const t = tables[id], el = $(`#${id}-table`);
+  if (!t.rows.length) { el.innerHTML = `<tr><td class="empty">No flips match your filters.</td></tr>`; return; }
+  const rows = [...t.rows].sort((a, b) => {
+    const x = a[t.key], y = b[t.key];
+    return (typeof x === "string" ? x.localeCompare(y) : x - y) * (t.asc ? 1 : -1);
+  });
+  const head = t.cols.map(([label, key]) =>
+    `<th data-key="${key || ""}" class="${key === t.key ? "sorted" + (t.asc ? " asc" : "") : ""}">${label}</th>`).join("");
+  const body = rows.map((r, i) => {
+    const cells = t.cols.map(([, key, f], c) => {
+      if (c === 0) return `<td class="rank">${i + 1}</td>`;
+      if (key === "item") return `<td>${esc(r.item)}${r.tier ? `<span class="tier ${esc(r.tier)}">${esc(r.tier)}</span>` : ""}</td>`;
+      if (!key) return `<td><button class="copy" data-cmd="${esc(r.cmd)}">Copy /viewauction</button></td>`;
+      return `<td>${f(r[key])}</td>`;
+    }).join("");
+    return `<tr class="${r._new ? "new" : ""}">${cells}</tr>`;
+  }).join("");
+  el.innerHTML = `<thead><tr>${head}</tr></thead><tbody>${body}</tbody>`;
+  el.querySelectorAll("th[data-key]").forEach((th) => th.dataset.key && (th.onclick = () => {
+    if (t.key === th.dataset.key) t.asc = !t.asc; else { t.key = th.dataset.key; t.asc = false; }
+    render(id);
+  }));
+  el.querySelectorAll(".copy").forEach((b) => b.onclick = async () => {
+    try { await navigator.clipboard.writeText(b.dataset.cmd); } catch {}
+    b.textContent = "Copied!"; b.classList.add("done");
+    setTimeout(() => { b.textContent = "Copy /viewauction"; b.classList.remove("done"); }, 1500);
+  });
+}
+
+// ── scanning ──
+let busy = false;
+async function scan({ ahOnly = false } = {}) {
+  if (busy) return; busy = true;
+  const btn = $("#run"); btn.disabled = true; btn.textContent = "Scanning…";
+  $("#err").style.display = "none";
+  const params = new URLSearchParams(new FormData(form));
+  if (ahOnly) params.set("bazaar", "0");
+  const t0 = performance.now();
+  try {
+    const res = await fetch("/api/scan?" + params);
+    const data = await res.json();
+    if (data.error) throw new Error(data.error);
+    if (data.bazaar) { tables.bz.rows = data.bazaar; $("#n-bz").textContent = data.bazaar.length; render("bz"); }
+    if (data.ah) {
+      let fresh = 0;
+      data.ah.forEach((r) => { r._new = !firstAh && !seen.has(r.uuid); if (r._new) fresh++; seen.add(r.uuid); });
+      firstAh = false;
+      tables.ah.rows = data.ah; $("#n-ah").textContent = data.ah.length; render("ah");
+      $("#ah-note").textContent = `${data.ah_meta.scanned.toLocaleString()} auctions scanned · Hypixel data ${data.ah_meta.age}s old` +
+        (fresh ? ` · ${fresh} new since last scan (highlighted)` : "") + ". Snipes vanish fast — use Live AH.";
+    }
+    $("#status").textContent = `Last scan ${new Date().toLocaleTimeString()} · took ${((performance.now() - t0) / 1000).toFixed(1)}s`;
+  } catch (e) {
+    $("#err").textContent = "Scan failed: " + e.message + " — is server.py still running?";
+    $("#err").style.display = "block";
+  } finally {
+    busy = false; btn.disabled = false; btn.textContent = "Scan now";
+  }
+}
+$("#run").onclick = () => scan();
+
+let liveTimer = null;
+$("#live").onchange = (e) => {
+  clearInterval(liveTimer);
+  if (e.target.checked) { scan({ ahOnly: true }); liveTimer = setInterval(() => scan({ ahOnly: true }), 60000); }
+};
+
+// ── past reports ──
+async function loadReports() {
+  const files = await (await fetch("/api/reports")).json();
+  const ul = $("#rp-list");
+  ul.innerHTML = files.length ? files.map((f) => `<li data-f="${esc(f)}">${esc(f.replace("flips-", "").replace(".md", ""))}</li>`).join("")
+                              : `<li>No reports yet</li>`;
+  ul.querySelectorAll("li[data-f]").forEach((li) => li.onclick = async () => {
+    ul.querySelectorAll("li").forEach((x) => x.classList.remove("on")); li.classList.add("on");
+    $("#rp-view").textContent = await (await fetch("/api/reports/" + encodeURIComponent(li.dataset.f))).text();
+  });
+  ul.querySelector("li[data-f]")?.click();
+}
+
+scan();
+</script>
+</body>
+</html>
