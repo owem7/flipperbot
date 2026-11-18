@@ -62,11 +62,11 @@
   .copy { padding: 4px 10px; font-size: 12px; font-family: inherit; }
   .copy.done { color: var(--green); border-color: var(--green); }
   .empty { padding: 40px; text-align: center; color: var(--muted); }
-  .search { position: relative; margin-bottom: 16px; }
+  .search { position: relative; flex: 1; min-width: 220px; }
   .search input { font: inherit; font-size: 15px; width: 100%; color: var(--text); background: var(--panel);
-                  border: 1px solid var(--line); border-radius: 10px; padding: 11px 14px 11px 38px; }
+                  border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px 8px 34px; }
   .search input:focus { outline: none; border-color: var(--gold); }
-  .search::before { content: "⌕"; position: absolute; left: 13px; top: 8px; font-size: 19px; color: var(--muted); }
+  .search::before { content: "⌕"; position: absolute; left: 11px; top: 5px; font-size: 19px; color: var(--muted); }
   #search-results { margin-bottom: 20px; display: none; }
   #search-results.on { display: block; }
   .sub { display: block; font-family: var(--mono); font-size: 11px; color: var(--muted); }
@@ -80,17 +80,16 @@
   <header>
     <h1><span class="coin"></span>Flip Bot</h1>
     <span class="status" id="status">Not scanned yet</span>
-    <span class="spacer"></span>
+    <div class="search">
+      <input id="q" type="search" placeholder="Search Bazaar items — e.g. booster cookie"
+             autocomplete="off" spellcheck="false" aria-label="Search Bazaar items">
+    </div>
     <label class="toggle" title="Rescan the auction house every 60s and highlight new snipes">
       <input type="checkbox" id="live"> Live AH (60s)
     </label>
     <button class="primary" id="run">Scan now</button>
   </header>
 
-  <div class="search">
-    <input id="q" type="search" placeholder="Search Bazaar items — e.g. enchanted diamond, ultimate wise, booster cookie"
-           autocomplete="off" spellcheck="false" aria-label="Search Bazaar items">
-  </div>
   <section id="search-results">
     <p class="note" id="search-note"></p>
     <div class="table-wrap"><table id="search-table"></table></div>
@@ -109,7 +108,6 @@
     <label>Min ROI <input name="min_roi" value="0.05"></label>
     <label>Max ROI (sanity) <input name="max_roi" value="0.75"></label>
     <label>Min exact matches <input name="min_matches" value="2"></label>
-    <label>Bazaar volume share <input name="share" value="0.10"></label>
     <label>Results <input name="top" value="25"></label>
   </form>
 
@@ -122,7 +120,7 @@
 
   <section class="pane on" id="bz">
     <p class="note">Place a buy order just above the top buy order, then a sell offer just under the lowest sell offer.
-      Profit/hr assumes you fill your volume share of hourly trades, capped by budget.</p>
+      Profit/hr assumes you fill 10% of hourly trades, capped by budget.</p>
     <div class="table-wrap"><table id="bz-table"></table></div>
   </section>
 
