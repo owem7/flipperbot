@@ -1,0 +1,4 @@
+# Flip Bot uses only the Python standard library — no third-party packages needed.
+# Requires Python 3.9 or newer.
+#
+#   pip install -r requirements.txt   # (no-op; kept so tooling has a file to read)
